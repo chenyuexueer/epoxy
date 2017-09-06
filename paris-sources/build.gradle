@@ -1,0 +1,2 @@
+configurations.maybeCreate("default")
+artifacts.add("default", file('paris-0.0.51-sources.jar'))

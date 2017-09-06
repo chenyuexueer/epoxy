@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
 apply plugin: 'me.tatarka.retrolambda'
 
 buildscript {
@@ -28,7 +29,7 @@ android {
 
   defaultConfig {
     applicationId "com.airbnb.android.epoxysample"
-    minSdkVersion rootProject.MIN_SDK_VERSION_LITHO
+    minSdkVersion 16
     targetSdkVersion rootProject.TARGET_SDK_VERSION
     vectorDrawables.useSupportLibrary = true
     versionCode 1
@@ -59,6 +60,10 @@ dependencies {
   compile project(':epoxy-databinding')
   compile project(':epoxy-adapter')
   annotationProcessor project(':epoxy-processor')
+  
+  annotationProcessor project(':paris-processor')
+  compile project(":paris")
+  compile project(":paris-annotations")
 
   // Dependencies for the optional litho integration
   compile project(':epoxy-litho')
@@ -75,4 +80,5 @@ dependencies {
   compile rootProject.deps.lottie
 
   testCompile rootProject.deps.junit
+  compile "org.jetbrains.kotlin:kotlin-stdlib-jre7:$KOTLIN_VERSION"
 }

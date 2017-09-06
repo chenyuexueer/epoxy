@@ -5,11 +5,14 @@ import android.support.v7.widget.RecyclerView.RecycledViewPool;
 import com.airbnb.epoxy.AutoModel;
 import com.airbnb.epoxy.ButtonBindingModel_;
 import com.airbnb.epoxy.R;
+import com.airbnb.epoxy.StyleBuilderCallback;
 import com.airbnb.epoxy.TypedEpoxyController;
 import com.airbnb.epoxy.sample.models.CarouselModelGroup;
 import com.airbnb.epoxy.sample.views.HeaderViewModel_;
+import com.airbnb.epoxy.sample.views.HeaderViewStyleApplier.StyleBuilder;
 
 import java.util.List;
+import java.util.Random;
 
 public class SampleController extends TypedEpoxyController<List<CarouselData>> {
   public interface AdapterCallbacks {
@@ -32,6 +35,7 @@ public class SampleController extends TypedEpoxyController<List<CarouselData>> {
 
   private final AdapterCallbacks callbacks;
   private final RecycledViewPool recycledViewPool;
+  private boolean green;
 
   SampleController(AdapterCallbacks callbacks, RecycledViewPool recycledViewPool) {
     this.callbacks = callbacks;
@@ -44,13 +48,25 @@ public class SampleController extends TypedEpoxyController<List<CarouselData>> {
     header
         .title(R.string.epoxy)
         .caption(R.string.header_subtitle);
+
+    if (green) {
+//      header.withGreenStyle();
+      header.styleBuilder(new StyleBuilderCallback<StyleBuilder>() {
+        @Override
+        public void buildStyle(StyleBuilder builder) {
+          builder.paddingLeftDp(new Random(10).nextInt());
+        }
+      });
+    }
     // "addTo" is not needed since implicit adding is enabled
     // (https://github.com/airbnb/epoxy/wiki/Epoxy-Controller#implicit-adding)
 
     addButton
         .textRes(R.string.button_add)
         .clickListener((model, parentView, clickedView, position) -> {
-          callbacks.onAddCarouselClicked();
+          green = !green;
+          setData(carousels);
+//          callbacks.onAddCarouselClicked();
         });
 
     clearButton

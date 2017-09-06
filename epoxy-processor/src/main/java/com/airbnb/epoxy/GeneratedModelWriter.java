@@ -31,6 +31,8 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
+import static com.airbnb.epoxy.ParisStyleAttributeInfoKt.PARIS_DEFAULT_STYLE_CONSTANT_NAME;
+import static com.airbnb.epoxy.ParisStyleAttributeInfoKt.PARIS_STYLE_ATTR_NAME;
 import static com.airbnb.epoxy.Utils.EPOXY_CONTROLLER_TYPE;
 import static com.airbnb.epoxy.Utils.EPOXY_VIEW_HOLDER_TYPE;
 import static com.airbnb.epoxy.Utils.GENERATED_MODEL_INTERFACE;
@@ -56,7 +58,9 @@ import static com.squareup.javapoet.TypeName.LONG;
 import static com.squareup.javapoet.TypeName.SHORT;
 import static javax.lang.model.element.Modifier.FINAL;
 import static javax.lang.model.element.Modifier.PRIVATE;
+import static javax.lang.model.element.Modifier.PROTECTED;
 import static javax.lang.model.element.Modifier.PUBLIC;
+import static javax.lang.model.element.Modifier.STATIC;
 
 class GeneratedModelWriter {
   /**
@@ -137,6 +141,7 @@ class GeneratedModelWriter {
         .addSuperinterface(getGeneratedModelInterface(info))
         .addTypeVariables(info.getTypeVariables())
         .addAnnotations(info.getAnnotations())
+        .addFields(buildStyleConstant(info))
         .addFields(generateFields(info))
         .addMethods(generateConstructors(info));
 
@@ -144,6 +149,7 @@ class GeneratedModelWriter {
 
     builder
         .addMethods(generateBindMethods(info))
+        .addMethods(generateStyleableViewMethods(info))
         .addMethods(generateSettersAndGetters(info))
         .addMethods(generateMethodsReturningClassType(info))
         .addMethods(generateDefaultMethodImplementations(info))
@@ -210,6 +216,29 @@ class GeneratedModelWriter {
         getClassName(GENERATED_MODEL_INTERFACE),
         info.getModelType()
     );
+  }
+
+  private Iterable<FieldSpec> buildStyleConstant(GeneratedModelInfo info) {
+    List<FieldSpec> constantFields = new ArrayList<>();
+
+    Modifier[] constantModifiers = new Modifier[]{FINAL, PRIVATE, STATIC};
+
+    // If this is a styleable view we add a constant to store the default style builder.
+    // This is an optimization to avoid recreating the default style many times, since it is likely
+    // often needed at runtime.
+    ParisStyleAttributeInfo styleBuilderInfo = info.getStyleBuilderInfo();
+    if (styleBuilderInfo != null) {
+      constantFields.add(
+          FieldSpec.builder(
+              ClassNames.PARIS_STYLE,
+              PARIS_DEFAULT_STYLE_CONSTANT_NAME,
+              constantModifiers
+          )
+              .initializer("new $T().addDefault().build()", styleBuilderInfo.getStyleBuilderClass())
+              .build());
+    }
+
+    return constantFields;
   }
 
   private Iterable<FieldSpec> generateFields(GeneratedModelInfo classInfo) {
@@ -520,6 +549,76 @@ class GeneratedModelWriter {
     return methods;
   }
 
+  private Iterable<MethodSpec> generateStyleableViewMethods(GeneratedModelInfo modelInfo) {
+    ParisStyleAttributeInfo styleBuilderInfo = modelInfo.getStyleBuilderInfo();
+    if (styleBuilderInfo == null) {
+      return Collections.emptyList();
+    }
+
+    List<MethodSpec> methods = new ArrayList<>();
+    TypeName styleType = styleBuilderInfo.getTypeName();
+    ClassName styleBuilderClass = styleBuilderInfo.getStyleBuilderClass();
+
+    // buildView method to return new view instance
+    methods.add(MethodSpec.methodBuilder("buildView")
+        .addAnnotation(Override.class)
+        .addParameter(ClassNames.ANDROID_VIEW_GROUP, "parent")
+        .addModifiers(PROTECTED)
+        .returns(modelInfo.boundObjectTypeName)
+        .addStatement("return new $T(parent.getContext())", modelInfo.boundObjectTypeName)
+        .build());
+
+    // getViewType method so that view type is generated at runtime
+    methods.add(MethodSpec.methodBuilder("getViewType")
+        .addAnnotation(Override.class)
+        .addModifiers(PROTECTED)
+        .returns(TypeName.INT)
+        .addStatement("return 0", modelInfo.boundObjectTypeName)
+        .build());
+
+    // setter for style object
+    Builder builder = MethodSpec.methodBuilder(PARIS_STYLE_ATTR_NAME)
+        .addModifiers(PUBLIC)
+        .returns(modelInfo.getParameterizedGeneratedName())
+        .addParameter(styleType, PARIS_STYLE_ATTR_NAME);
+
+    setBitSetIfNeeded(modelInfo, styleBuilderInfo, builder);
+    addOnMutationCall(builder)
+        .addStatement(styleBuilderInfo.setterCode(), PARIS_STYLE_ATTR_NAME);
+
+    methods.add(builder
+        .addStatement("return this")
+        .build());
+
+    // Lambda for building the style
+    ParameterizedTypeName parameterizedBuilderCallbackType =
+        ParameterizedTypeName.get(ClassNames.EPOXY_STYLE_BUILDER_CALLBACK, styleBuilderClass);
+
+    methods.add(MethodSpec.methodBuilder("styleBuilder")
+        .addModifiers(PUBLIC)
+        .returns(modelInfo.getParameterizedGeneratedName())
+        .addParameter(parameterizedBuilderCallbackType, "builderCallback")
+        .addStatement("$T builder = new $T()", styleBuilderClass, styleBuilderClass)
+        .addStatement("builderCallback.buildStyle(builder.addDefault())")
+        .addStatement("return $L(builder.build())", PARIS_STYLE_ATTR_NAME)
+        .build());
+
+    // Methods for setting each defined style directly
+    for (String styleName : styleBuilderInfo.getStyleNames()) {
+      String capitalizedStyle = Utils.capitalizeFirstLetter(styleName);
+      String methodName = "with" + capitalizedStyle + "Style";
+      methods.add(MethodSpec.methodBuilder(methodName)
+          .addModifiers(PUBLIC)
+          .returns(modelInfo.getParameterizedGeneratedName())
+          .addStatement("return $L(new $T().add$L().build())",
+              PARIS_STYLE_ATTR_NAME, styleBuilderClass, capitalizedStyle)
+          .build());
+    }
+
+
+    return methods;
+  }
+
   private Iterable<MethodSpec> generateMethodsReturningClassType(GeneratedModelInfo info) {
     List<MethodSpec> methods = new ArrayList<>(info.getMethodsReturningClassType().size());
 
@@ -531,14 +630,26 @@ class GeneratedModelWriter {
           .varargs(methodInfo.varargs)
           .returns(info.getParameterizedGeneratedName());
 
-      StringBuilder statementBuilder = new StringBuilder(String.format("super.%s(",
-          methodInfo.name));
-      generateParams(statementBuilder, methodInfo.params);
+      if (info.isStyleable()
+          && "layout".equals(methodInfo.name)
+          && methodInfo.params.size() == 1
+          && methodInfo.params.get(0).type == TypeName.INT) {
 
-      methods.add(builder
-          .addStatement(statementBuilder.toString())
-          .addStatement("return this")
-          .build());
+        builder
+            .addStatement("throw new $T(\"Layout resources are unsupported in @Styleable views.\")",
+                UnsupportedOperationException.class);
+      } else {
+
+        StringBuilder statementBuilder = new StringBuilder(String.format("super.%s(",
+            methodInfo.name));
+        generateParams(statementBuilder, methodInfo.params);
+
+        builder
+            .addStatement(statementBuilder.toString())
+            .addStatement("return this");
+      }
+
+      methods.add(builder.build());
     }
 
     return methods;
@@ -551,8 +662,16 @@ class GeneratedModelWriter {
   private Iterable<MethodSpec> generateDefaultMethodImplementations(GeneratedModelInfo info) {
     List<MethodSpec> methods = new ArrayList<>();
 
-    addCreateHolderMethodIfNeeded(info, methods);
-    addDefaultLayoutMethodIfNeeded(info, methods);
+    if (info.isStyleable()) {
+      methods.add(buildDefaultLayoutMethodBase()
+          .toBuilder()
+          .addStatement("throw new $T(\"Layout resources are unsupported in @Styleable views\")",
+              UnsupportedOperationException.class)
+          .build());
+    } else {
+      addCreateHolderMethodIfNeeded(info, methods);
+      addDefaultLayoutMethodIfNeeded(info, methods);
+    }
 
     return methods;
   }
