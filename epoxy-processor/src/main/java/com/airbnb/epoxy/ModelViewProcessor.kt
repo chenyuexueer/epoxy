@@ -304,12 +304,16 @@ internal class ModelViewProcessor(
                 .filter {
                     it.viewElement
                             .annotationMirrors
-                            .map { it.annotationType.asElement().simpleName.toString() }
-                            .contains("Styleable")
+                            .map { it.annotationType.asElement() }
+                            .any {
+                                it.simpleName.toString() == "Styleable"
+                                        && elements.getPackageOf(it).qualifiedName.contains("paris")
+                            }
                 }
                 .also {
                     styleableModelsToWrite.addAll(it)
                 }
+
     }
 
     private fun validateResetElement(resetMethod: Element): Boolean =

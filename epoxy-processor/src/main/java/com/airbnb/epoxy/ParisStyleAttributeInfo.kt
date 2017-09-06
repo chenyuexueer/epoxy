@@ -11,6 +11,8 @@ const val BUILDER_STYLE_METHOD_PREFIX = "add"
 const val PARIS_DEFAULT_STYLE_CONSTANT_NAME = "DEFAULT_PARIS_STYLE"
 const val PARIS_STYLE_ATTR_NAME = "style"
 
+fun weakReferenceFieldForStyle(styleName: String) = "parisStyleReference_$styleName"
+
 
 internal class ParisStyleAttributeInfo(
         modelInfo: ModelViewInfo,

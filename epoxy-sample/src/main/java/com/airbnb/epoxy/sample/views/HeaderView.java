@@ -36,7 +36,7 @@ public class HeaderView extends LinearLayout {
   public HeaderView(Context context, AttributeSet attrs) {
     super(context, attrs);
     init();
-    ////
+    //
   }
 
   private void init() {

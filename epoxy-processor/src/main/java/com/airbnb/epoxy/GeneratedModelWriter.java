@@ -19,6 +19,7 @@ import com.squareup.javapoet.TypeSpec;
 
 import java.io.IOException;
 import java.lang.annotation.AnnotationTypeMismatchException;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -33,6 +34,7 @@ import javax.lang.model.util.Types;
 
 import static com.airbnb.epoxy.ParisStyleAttributeInfoKt.PARIS_DEFAULT_STYLE_CONSTANT_NAME;
 import static com.airbnb.epoxy.ParisStyleAttributeInfoKt.PARIS_STYLE_ATTR_NAME;
+import static com.airbnb.epoxy.ParisStyleAttributeInfoKt.weakReferenceFieldForStyle;
 import static com.airbnb.epoxy.Utils.EPOXY_CONTROLLER_TYPE;
 import static com.airbnb.epoxy.Utils.EPOXY_VIEW_HOLDER_TYPE;
 import static com.airbnb.epoxy.Utils.GENERATED_MODEL_INTERFACE;
@@ -162,7 +164,6 @@ class GeneratedModelWriter {
 
     builderHooks.beforeFinalBuild(builder);
 
-
     new ModelBuilderInterfaceWriter(filer, info, builder.build().methodSpecs)
         .addInterface(builder);
 
@@ -219,22 +220,35 @@ class GeneratedModelWriter {
   }
 
   private Iterable<FieldSpec> buildStyleConstant(GeneratedModelInfo info) {
-    List<FieldSpec> constantFields = new ArrayList<>();
 
-    Modifier[] constantModifiers = new Modifier[]{FINAL, PRIVATE, STATIC};
+    ParisStyleAttributeInfo styleBuilderInfo = info.getStyleBuilderInfo();
+    if (styleBuilderInfo == null) {
+      return Collections.emptyList();
+    }
+
+    List<FieldSpec> constantFields = new ArrayList<>();
 
     // If this is a styleable view we add a constant to store the default style builder.
     // This is an optimization to avoid recreating the default style many times, since it is likely
     // often needed at runtime.
-    ParisStyleAttributeInfo styleBuilderInfo = info.getStyleBuilderInfo();
-    if (styleBuilderInfo != null) {
+    constantFields.add(
+        FieldSpec.builder(
+            ClassNames.PARIS_STYLE,
+            PARIS_DEFAULT_STYLE_CONSTANT_NAME,
+            FINAL, PRIVATE, STATIC
+        )
+            .initializer("new $T().addDefault().build()", styleBuilderInfo.getStyleBuilderClass())
+            .build());
+
+    // We store styles in a weak reference since if a controller uses it
+    // once it is likely to be used in other models and when models are rebuilt
+    for (String styleName : styleBuilderInfo.getStyleNames()) {
       constantFields.add(
           FieldSpec.builder(
-              ClassNames.PARIS_STYLE,
-              PARIS_DEFAULT_STYLE_CONSTANT_NAME,
-              constantModifiers
+              ParameterizedTypeName.get(ClassName.get(WeakReference.class), ClassNames.PARIS_STYLE),
+              weakReferenceFieldForStyle(styleName),
+              PRIVATE, STATIC
           )
-              .initializer("new $T().addDefault().build()", styleBuilderInfo.getStyleBuilderClass())
               .build());
     }
 
@@ -607,14 +621,22 @@ class GeneratedModelWriter {
     for (String styleName : styleBuilderInfo.getStyleNames()) {
       String capitalizedStyle = Utils.capitalizeFirstLetter(styleName);
       String methodName = "with" + capitalizedStyle + "Style";
+      String fieldName = weakReferenceFieldForStyle(styleName);
+
+      // The style is stored in a static weak reference since it is likely to be reused in other
+      // models are when models are rebuilt.
       methods.add(MethodSpec.methodBuilder(methodName)
           .addModifiers(PUBLIC)
           .returns(modelInfo.getParameterizedGeneratedName())
-          .addStatement("return $L(new $T().add$L().build())",
-              PARIS_STYLE_ATTR_NAME, styleBuilderClass, capitalizedStyle)
+          .addStatement("$T style = $L != null ? $L.get() : null", ClassNames.PARIS_STYLE,
+              fieldName, fieldName)
+          .beginControlFlow("if (style == null)")
+          .addStatement("style =  new $T().add$L().build()", styleBuilderClass, capitalizedStyle)
+          .addStatement("$L = new $T<>(style)", fieldName, WeakReference.class)
+          .endControlFlow()
+          .addStatement("return $L(style)", PARIS_STYLE_ATTR_NAME)
           .build());
     }
-
 
     return methods;
   }

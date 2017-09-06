@@ -50,13 +50,13 @@ public class SampleController extends TypedEpoxyController<List<CarouselData>> {
         .caption(R.string.header_subtitle);
 
     if (green) {
-//      header.withGreenStyle();
-      header.styleBuilder(new StyleBuilderCallback<StyleBuilder>() {
-        @Override
-        public void buildStyle(StyleBuilder builder) {
-          builder.paddingLeftDp(new Random(10).nextInt());
-        }
-      });
+      header.withGreenStyle();
+//      header.styleBuilder(new StyleBuilderCallback<StyleBuilder>() {
+//        @Override
+//        public void buildStyle(StyleBuilder builder) {
+//          builder.paddingLeft(20);
+//        }
+//      });
     }
     // "addTo" is not needed since implicit adding is enabled
     // (https://github.com/airbnb/epoxy/wiki/Epoxy-Controller#implicit-adding)
